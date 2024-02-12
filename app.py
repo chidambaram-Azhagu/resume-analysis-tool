@@ -100,26 +100,19 @@ def main():
         .st-emotion-cache-16txtl3 {
             padding: 1rem 1.5rem;
         }
-    }
-
+        .st-emotion-cache-1y4p8pa{
+            # background-color:yellow;
+            padding-top: 0.5px;
+            transform: translateY(5%);
+        }
     </style>
     """, unsafe_allow_html=True)
     with st.sidebar:
-            st.title("Menu:")
-            selection = st.selectbox("Choose file selection method:", ["Choose Files","Choose Folder", "S3 Folder"])
+            st.title("Resume:")
+            selection = st.selectbox("Choose file selection method:", ["Choose Files", "S3 Folder Path"])
             if selection == "Choose Files":
                 uploaded_files = st.file_uploader("Upload Resume(s)", type="pdf", accept_multiple_files=True, help="Please upload the pdf")
-            elif selection == "Choose Folder":
-                folder_path = st.text_input("Enter the path to the folder containing PDF files:")
-                if os.path.isdir(folder_path):
-                    folder_files = [os.path.join(folder_path, filename) for filename in os.listdir(folder_path) if filename.endswith('.pdf')]
-                    uploaded_files = [open(file, 'rb') for file in folder_files]
-                    st.write(f"{len(uploaded_files)} PDFs in the folder: {folder_path}")
-                else:
-                    st.write("Invalid folder path. Please enter a valid folder path containing PDF files.")
-
-                    uploaded_files = None
-            elif selection == "S3 Folder":
+            elif selection == "S3 Folder Path":
                 folder_path = st.text_input("Enter the path to the folder containing PDF files:")
                 if os.path.isdir(folder_path):
                     folder_files = [os.path.join(folder_path, filename) for filename in os.listdir(folder_path) if filename.endswith('.pdf')]
