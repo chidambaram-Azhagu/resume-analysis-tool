@@ -8,6 +8,9 @@ from concurrent.futures import ThreadPoolExecutor
 import ast
 import pandas as pd
 import re
+import boto3
+from urllib.parse import urlparse
+from io import BytesIO
 
 load_dotenv() ## load all our environment variables
 
@@ -93,6 +96,43 @@ def get_gemini_response_filter(input):
     except Exception as e:
         print("Error in get_gemini_response_filter() ", e)
 
+# Function to extract bucket name and object key from S3 URL
+def parse_s3_url(s3_url):
+    try:
+        parsed_url = urlparse(s3_url)
+        bucket_name = parsed_url.netloc.split('.')[0]
+        object_key = parsed_url.path.lstrip('/')
+        return bucket_name, object_key
+    except Exception as e:
+        print("Error in parse_s3_url() ->", e)
+
+# Function to download file from S3
+def download_file_from_s3(bucket_name, object_key, file_path):
+    try:
+        s3 = boto3.client('s3')
+        s3.download_file(bucket_name, object_key, file_path)
+        return True
+    except Exception as e:
+        print("Error downloading file from S3:", e)
+        return False
+
+# Function to process S3 URL input
+def process_s3_input(s3_url):
+    try:
+        bucket_name, object_key = parse_s3_url(s3_url)
+        temp_folder = "temp"
+        if not os.path.exists(temp_folder):
+            os.makedirs(temp_folder)
+        file_path = os.path.join(temp_folder, os.path.basename(object_key))
+        if download_file_from_s3(bucket_name, object_key, file_path):
+            return temp_folder
+        else:
+            print("Failed to download file from S3.")
+            return None
+    except Exception as e:
+        print("Error processing S3 input:", e)
+
+
 ## streamlit app UI datas :
 def main():
     st.markdown("""
@@ -100,30 +140,37 @@ def main():
         .st-emotion-cache-16txtl3 {
             padding: 1rem 1.5rem;
         }
-        .st-emotion-cache-1y4p8pa{
-            # background-color:yellow;
-            padding-top: 0.5px;
-            transform: translateY(5%);
-        }
     </style>
     """, unsafe_allow_html=True)
     with st.sidebar:
             st.title("Resume:")
-            selection = st.selectbox("Choose file selection method:", ["Choose Files", "S3 Folder Path"])
+            selection = st.selectbox("Choose file selection method:", ["Choose Files", "S3 Url"])
+            uploaded_files = None  
             if selection == "Choose Files":
                 uploaded_files = st.file_uploader("Upload Resume(s)", type="pdf", accept_multiple_files=True, help="Please upload the pdf")
-            elif selection == "S3 Folder Path":
-                folder_path = st.text_input("Enter the path to the folder containing PDF files:")
-                if os.path.isdir(folder_path):
-                    folder_files = [os.path.join(folder_path, filename) for filename in os.listdir(folder_path) if filename.endswith('.pdf')]
-                    uploaded_files = [open(file, 'rb') for file in folder_files]
-                    st.write(f"{len(uploaded_files)} PDFs in the folder: {folder_path}")
-                else:
-                    st.write("Invalid folder path. Please enter a valid folder path containing PDF files.")
-            summary_button = st.button("Summary of the Resumes")
-            percent_match_button = st.button("Percentage Match")
-            fit_button = st.button("Fit for Role")
-            filter_button = st.button("Filter")
+            elif selection == "S3 Url":
+                s3_url = st.text_input("Enter the URL to the S3 object (file):")
+                if s3_url:
+                    file_folder_name = process_s3_input(s3_url)
+                    if file_folder_name:
+                        if os.path.isdir(file_folder_name):
+                            folder_files = [os.path.join(file_folder_name, filename) for filename in os.listdir(file_folder_name) if filename.endswith('.pdf')]
+                            uploaded_files = [open(file, 'rb') for file in folder_files]
+                    else:
+                        st.write("Failed to download file from S3. Please check the URL.")
+                        uploaded_files = None
+            num_uploaded_files = len(uploaded_files) if uploaded_files else 0
+            st.write(f"Total PDF's Uploaded: {num_uploaded_files}")
+            if num_uploaded_files > 0:
+                summary_button = st.button("Summary of the Resumes")
+                percent_match_button = st.button("Percentage Match")
+                fit_button = st.button("Fit for Role")
+                filter_button = st.button("Filter")
+            else:
+                summary_button = st.button("Summary of the Resumes", disabled=True)
+                percent_match_button = st.button("Percentage Match", disabled=True)
+                fit_button = st.button("Fit for Role", disabled=True)
+                filter_button = st.button("Filter", disabled=True)
 
             #Prompts passed to the Gemini AI:
             summary_prompt = """
@@ -160,7 +207,10 @@ def main():
                     try:
                         pdf_content = input_pdf_text(uploaded_file)
                         response = get_gemini_response_summary(summary_prompt, pdf_content)
-                        results.append({"File Name": uploaded_file.name, "Response": response})
+                        if selection == "S3 Url" :
+                            results.append({"File Name":os.path.basename(uploaded_file.name),"Response": response})
+                        else :
+                            results.append({"File Name": uploaded_file.name, "Response": response})
                     except Exception as e :
                         print('err in summary_button data',e)
 
@@ -187,11 +237,17 @@ def main():
                         if not fit_button:  
                             response = get_gemini_response(processed_input_text, pdf_content_to_ai, percentage_match_prompt)
                             response_as_dictionary = extract_percentage_match_info(response)
-                            results.append({"File Name": uploaded_file.name, "Percentage Match": response_as_dictionary["percentage_match"], "Keywords Missing": response_as_dictionary["keywords_missing"], "Final Thoughts": response_as_dictionary["final_thoughts"]})
+                            if selection == "S3 Url" :
+                                results.append({"File Name":os.path.basename(uploaded_file.name), "Percentage Match": response_as_dictionary["percentage_match"], "Keywords Missing": response_as_dictionary["keywords_missing"], "Final Thoughts": response_as_dictionary["final_thoughts"]})
+                            else:
+                                results.append({"File Name": uploaded_file.name, "Percentage Match": response_as_dictionary["percentage_match"], "Keywords Missing": response_as_dictionary["keywords_missing"], "Final Thoughts": response_as_dictionary["final_thoughts"]})
                         else :
                             response = get_gemini_response(processed_input_text, pdf_content_to_ai, fit_for_role_prompt)
                             response_as_dictionary = extract_fit_for_role_response_info(response)
-                            results.append({"File Name": uploaded_file.name, "Status": response_as_dictionary["is_relatable"], "Reason" : response_as_dictionary["reason"]})
+                            if selection == "S3 Url" :
+                                results.append({"File Name":os.path.basename(uploaded_file.name), "Status": response_as_dictionary["is_relatable"], "Reason" : response_as_dictionary["reason"]})
+                            else:
+                                results.append({"File Name": uploaded_file.name, "Status": response_as_dictionary["is_relatable"], "Reason" : response_as_dictionary["reason"]})
                     except Exception as e :
                         print('Error in submit data',e)
 
@@ -221,8 +277,12 @@ def main():
                     response = get_gemini_response(processed_input_text, pdf_content_to_ai, fit_for_role_prompt)
                     response_as_dictionary = extract_fit_for_role_response_info(response)
                     # check_response = get_gemini_response_filter("check whether the content is positive (like 'is relatable' or 'is more relatable' or 'is more or less relatable') or negative (like  'is not relatable' or 'is less relatable') if positive return 'Positive' else return 'Negative' " + response)
-                    if response_as_dictionary["is_relatable"] == 'Yes':
-                        results.append({"File Name": uploaded_file.name, "Reason" : response_as_dictionary["reason"]})
+                    if selection == "S3 Url" :
+                        if response_as_dictionary["is_relatable"] == 'Yes':
+                            results.append({"File Name":os.path.basename(uploaded_file.name), "Reason" : response_as_dictionary["reason"]})
+                    else:
+                        if response_as_dictionary["is_relatable"] == 'Yes':
+                            results.append({"File Name": uploaded_file.name, "Reason" : response_as_dictionary["reason"]})
                 except Exception as e :
                     print('Error in submit filter', e)
             with ThreadPoolExecutor() as executor:
